@@ -1,0 +1,179 @@
+#!/usr/bin/env bash
+# ponytail: NM hotspot control for waybar — status / toggle / rofi menu
+set -euo pipefail
+
+CONF="${XDG_CONFIG_HOME:-$HOME/.config}/waybar/hotspot.conf"
+# shellcheck disable=SC1090
+[[ -f $CONF ]] && source "$CONF"
+
+CONNECTION=${CONNECTION:-abdosh-hotspot}
+SSID=${SSID:-abdosh}
+PASSWORD=${PASSWORD:-}
+WIFI_IFACE=${WIFI_IFACE:-wlan0}
+
+is_up() {
+    nmcli -t -f NAME,DEVICE connection show --active 2>/dev/null | grep -qx "${CONNECTION}:${WIFI_IFACE}"
+}
+
+client_count() {
+    local n
+    n=$(iw dev "$WIFI_IFACE" station dump 2>/dev/null | grep -c '^Station' || true)
+    echo "${n:-0}"
+}
+
+sync_nm() {
+    nmcli connection modify "$CONNECTION" \
+        802-11-wireless.ssid "$SSID" \
+        802-11-wireless-security.key-mgmt wpa-psk \
+        802-11-wireless-security.psk "$PASSWORD" >/dev/null
+}
+
+status() {
+    if is_up; then
+        n=$(client_count)
+        printf '{"text":"%s","alt":"on","tooltip":"Hotspot ON\\nSSID: %s\\nClients: %s\\nLeft: toggle · Right: menu","class":"on"}\n' \
+            "󰖩 ${n}" "$SSID" "$n"
+    else
+        printf '{"text":"%s","alt":"off","tooltip":"Hotspot OFF\\nSSID: %s\\nLeft: toggle · Right: menu","class":"off"}\n' \
+            "󰖪" "$SSID"
+    fi
+}
+
+toggle() {
+    if is_up; then
+        nmcli connection down "$CONNECTION" >/dev/null
+        notify-send -a Hotspot -i network-wireless-offline "Hotspot off" "$SSID"
+    else
+        [[ -n $PASSWORD ]] || { notify-send -a Hotspot -u critical "Hotspot" "Set PASSWORD in $CONF"; exit 1; }
+        sync_nm
+        if ! nmcli connection up "$CONNECTION" >/dev/null; then
+            notify-send -a Hotspot -u critical "Hotspot failed" "Check Wi‑Fi / $WIFI_IFACE"
+            exit 1
+        fi
+        notify-send -a Hotspot -i network-wireless "Hotspot on" "SSID: $SSID"
+    fi
+    pkill -RTMIN+8 waybar 2>/dev/null || true
+}
+
+psk() {
+    nmcli -s -g 802-11-wireless-security.psk connection show "$CONNECTION" 2>/dev/null || echo "$PASSWORD"
+}
+
+# Always prefer live NM values for QR (avoids stale conf mismatch)
+live_ssid() {
+    nmcli -g 802-11-wireless.ssid connection show "$CONNECTION" 2>/dev/null || echo "$SSID"
+}
+
+# WIFI QR reserved chars: \ ; , :
+wifi_escape() {
+    local s=$1
+    s=${s//\\/\\\\}
+    s=${s//;/\\;}
+    s=${s//,/\\,}
+    s=${s//:/\\:}
+    printf '%s' "$s"
+}
+
+wifi_payload() {
+    local pass sid
+    pass=$(psk)
+    sid=$(live_ssid)
+    printf 'WIFI:T:WPA;S:%s;P:%s;;' "$(wifi_escape "$sid")" "$(wifi_escape "$pass")"
+}
+
+show_info() {
+    local pass state
+    pass=$(psk)
+    if is_up; then
+        state="ON · $(client_count) client(s)"
+    else
+        state="OFF"
+    fi
+    notify-send -a Hotspot "Hotspot · $state" "SSID: $SSID\nPass: $pass\nIface: $WIFI_IFACE"
+}
+
+show_qr() {
+    local pass payload qr view
+    pass=$(psk)
+    [[ -n $pass ]] || { notify-send -a Hotspot -u critical "Hotspot" "No password set"; exit 1; }
+    payload=$(wifi_payload)
+    qr="${XDG_RUNTIME_DIR:-/tmp}/waybar-hotspot-qr.png"
+    view="${XDG_RUNTIME_DIR:-/tmp}/waybar-hotspot-qr-view.sh"
+    qrencode -t PNG -s 14 -m 2 -o "$qr" "$payload"
+    sid=$(live_ssid)
+    # ponytail: tiny viewer script avoids hyprctl quote hell
+    cat >"$view" <<EOF
+#!/usr/bin/env bash
+kitty +kitten icat --align center '$qr' 2>/dev/null || qrencode -t ansiutf8 $(printf '%q' "$payload")
+printf '\\n  SSID: %s\\n  Pass: %s\\n\\n  scan with phone camera · any key to close\\n' $(printf '%q' "$sid") $(printf '%q' "$pass")
+read -n1 -s
+EOF
+    chmod +x "$view"
+    # small floating window — not fullscreen (kitty + hypr class rules)
+    kitty --class hotspot-qr \
+        -o remember_window_size=no \
+        -o initial_window_width=380 \
+        -o initial_window_height=460 \
+        -o confirm_os_window_close=0 \
+        -e "$view" >/dev/null 2>&1 &
+}
+
+edit_field() {
+    local key=$1 label=$2 cur=$3
+    local val rofi_args=(-dmenu -p "$label" -theme-str 'window { width: 24em; }')
+    [[ $key == PASSWORD ]] && rofi_args+=(-password)
+    val=$(printf '%s\n' "$cur" | rofi "${rofi_args[@]}" 2>/dev/null) || return 0
+    [[ -z $val || $val == "$cur" ]] && return 0
+    if grep -q "^${key}=" "$CONF" 2>/dev/null; then
+        sed -i "s|^${key}=.*|${key}=${val}|" "$CONF"
+    else
+        echo "${key}=${val}" >>"$CONF"
+    fi
+    # shellcheck disable=SC1090
+    source "$CONF"
+    sync_nm
+    notify-send -a Hotspot "Updated $label" "$([[ $key == PASSWORD ]] && echo '(hidden)' || echo "$val")"
+    if is_up; then
+        nmcli connection down "$CONNECTION" >/dev/null || true
+        nmcli connection up "$CONNECTION" >/dev/null
+    fi
+    pkill -RTMIN+8 waybar 2>/dev/null || true
+}
+
+menu() {
+    local state choice
+    if is_up; then state="● ON · $(client_count) clients"; else state="○ OFF"; fi
+    choice=$(printf '%s\n' \
+        "Show QR to connect" \
+        "Toggle hotspot" \
+        "Show info / password" \
+        "Edit SSID" \
+        "Edit password" \
+        "Open NetworkManager" \
+        "Edit config file" |
+        rofi -dmenu -i -p "Hotspot ($state)" -theme-str 'window { width: 28em; }') || exit 0
+
+    case $choice in
+    "Show QR to connect") show_qr ;;
+    "Toggle hotspot") toggle ;;
+    "Show info / password") show_info ;;
+    "Edit SSID") edit_field SSID "SSID" "$SSID" ;;
+    "Edit password") edit_field PASSWORD "Password" "$PASSWORD" ;;
+    "Open NetworkManager") nm-connection-editor >/dev/null 2>&1 & ;;
+    "Edit config file")
+        ${EDITOR:-xdg-open} "$CONF" >/dev/null 2>&1 &
+        ;;
+    esac
+}
+
+case ${1:-status} in
+status) status ;;
+toggle) toggle ;;
+menu) menu ;;
+info) show_info ;;
+qr) show_qr ;;
+*)
+    echo "usage: waybar-hotspot {status|toggle|menu|info|qr}" >&2
+    exit 2
+    ;;
+esac

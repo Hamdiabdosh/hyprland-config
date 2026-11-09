@@ -1,0 +1,7 @@
+# Waybar hotspot — copy to hotspot.conf and edit locally (do not commit real passwords)
+CONNECTION=my-hotspot
+SSID=MyHotspot
+PASSWORD=CHANGE_ME
+WIFI_IFACE=wlan0
+# internet uplink for UFW fix helper (ethernet)
+WAN_IFACE=eth0

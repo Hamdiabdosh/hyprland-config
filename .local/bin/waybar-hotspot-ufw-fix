@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# Allow NetworkManager shared hotspot through UFW (needs root once)
+set -euo pipefail
+WIFI_IFACE=${1:-wlan0}
+WAN_IFACE=${2:-enp0s20f0u3u2}
+
+ufw status | head -3
+# DHCP + DNS on AP interface
+ufw allow in on "$WIFI_IFACE" to any port 67 proto udp comment 'hotspot-dhcp' || true
+ufw allow in on "$WIFI_IFACE" to any port 53 comment 'hotspot-dns' || true
+# client traffic from AP → internet
+ufw route allow in on "$WIFI_IFACE" out on "$WAN_IFACE" comment 'hotspot-fwd-out' || true
+ufw route allow in on "$WAN_IFACE" out on "$WIFI_IFACE" comment 'hotspot-fwd-in' || true
+ufw reload
+ufw status numbered
+echo "OK: UFW allows hotspot on $WIFI_IFACE → $WAN_IFACE"

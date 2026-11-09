@@ -1,0 +1,22 @@
+# Machine-specific Hyprland
+.config/hypr/monitors.conf
+.config/hypr/monitors.lua
+.config/hypr/userprefs.conf.save
+
+# Secrets / local hotspot credentials
+.config/waybar/hotspot.conf
+
+# Other HyDE themes (ship Tokyo Night only)
+.config/hyde/themes/*
+!.config/hyde/themes/Tokyo Night/
+!.config/hyde/themes/Tokyo Night/**
+
+# Credentials / keys
+**/.ssh/
+**/*secret*
+**/*credential*
+**/*.pem
+**/*id_rsa*
+**/*id_ed25519*
+**/.env
+**/.env.*

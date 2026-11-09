@@ -1,0 +1,20 @@
+{
+  "layer": "top",
+  "position": "top",
+  "height": 30,
+  "modules-left": ["hyprland/workspaces"],
+  "modules-center": ["hyprland/window"],
+  "modules-right": ["network", "clock"],
+
+  "network": {
+      "format-wifi": "{essid} ",
+      "format-ethernet": "Connected ",
+      "format-disconnected": "Disconnected ⚠",
+      "on-click": "networkmanager_dmenu"
+  },
+
+  "clock": {
+    "format": "{:%H:%M}"
+  }
+}
+

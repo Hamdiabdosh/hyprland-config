@@ -1,0 +1,12 @@
+/* User custom styles */
+
+#custom-hotspot {
+    padding: 0 8px;
+    margin: 0 2px;
+}
+#custom-hotspot.on {
+    color: #a6e3a1;
+}
+#custom-hotspot.off {
+    color: #6c7086;
+}
